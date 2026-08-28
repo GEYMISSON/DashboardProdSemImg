@@ -1,837 +1,196 @@
-import os
-import shutil
 from pathlib import Path
 from datetime import datetime
+import math
 
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
 
-
-# ============================================================
-# CONFIGURAÇÕES
-# ============================================================
+from utils.data_utils import (
+    localizar_arquivo,
+    ler_excel,
+    limpar_colunas,
+    validar_relatorio_unificado,
+    preparar_dados,
+    construir_resumo_fornecedores,
+    construir_produtos_sem_imagem,
+    possui_detalhe,
+    calcular_kpis,
+    classificacao_cobertura,
+    validar_consistencia,
+    exportar_csv,
+)
+from utils.ui import aplicar_estilo, metric_card, status_badge
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
-ARQUIVO_PADRAO = DATA_DIR / "RelatorioGeralImagens.xls"
-
 DATA_DIR.mkdir(exist_ok=True)
 
-
-# ============================================================
-# CONFIGURAÇÃO DA PÁGINA
-# ============================================================
 st.set_page_config(
     page_title="Dashboard de Imagens",
     page_icon="📷",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
+aplicar_estilo()
 
-# ============================================================
-# CSS
-# ============================================================
-
-st.markdown(
-    """
-    <style>
-
-    .main {
-        background-color: #f5f7fa;
-    }
-
-    .block-container {
-        padding-top: 1.5rem;
-        padding-bottom: 2rem;
-    }
-
-    .titulo {
-        font-size: 32px;
-        font-weight: 700;
-        color: #1f2937;
-        margin-bottom: 0px;
-    }
-
-    .subtitulo {
-        font-size: 15px;
-        color: #6b7280;
-        margin-bottom: 20px;
-    }
-
-    .card {
-        background-color: white;
-        border-radius: 12px;
-        padding: 20px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-        border: 1px solid #e5e7eb;
-        min-height: 120px;
-    }
-
-    .card-title {
-        color: #6b7280;
-        font-size: 14px;
-        font-weight: 600;
-        text-transform: uppercase;
-    }
-
-    .card-value {
-        color: #111827;
-        font-size: 30px;
-        font-weight: 700;
-        margin-top: 8px;
-    }
-
-    .card-green {
-        border-left: 5px solid #16a34a;
-    }
-
-    .card-red {
-        border-left: 5px solid #dc2626;
-    }
-
-    .card-blue {
-        border-left: 5px solid #2563eb;
-    }
-
-    .card-orange {
-        border-left: 5px solid #f59e0b;
-    }
-
-    .status-excelente {
-        color: #15803d;
-        font-weight: 700;
-    }
-
-    .status-atencao {
-        color: #ca8a04;
-        font-weight: 700;
-    }
-
-    .status-critico {
-        color: #dc2626;
-        font-weight: 700;
-    }
-
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-
-# ============================================================
-# FUNÇÕES
-# ============================================================
-
-def localizar_arquivo():
-    """
-    Localiza o arquivo RelatorioGeralImagens.xls.
-    Também aceita .xlsx.
-    """
-
-    arquivos = list(DATA_DIR.glob("*.xls")) + list(DATA_DIR.glob("*.xlsx"))
-
-    if not arquivos:
-        return None
-
-    # Prioriza o nome padrão
-    for arquivo in arquivos:
-        if arquivo.name.lower() == "relatoriogeralimagens.xls":
-            return arquivo
-
-    # Caso não exista, pega o arquivo mais recente
-    arquivos.sort(key=lambda x: x.stat().st_mtime, reverse=True)
-
-    return arquivos[0]
-
-
-def ler_excel(caminho):
-    """
-    Lê arquivos XLS ou XLSX.
-    """
-
-    extensao = caminho.suffix.lower()
-
-    if extensao == ".xls":
-        df = pd.read_excel(caminho, engine="xlrd")
-    else:
-        df = pd.read_excel(caminho, engine="openpyxl")
-
-    return df
-
-
-def limpar_colunas(df):
-    """
-    Padroniza os nomes das colunas.
-    """
-
-    df.columns = (
-        df.columns
-        .astype(str)
-        .str.strip()
-        .str.upper()
-    )
-
-    return df
-
-
-def preparar_dados(df):
-    """
-    Converte os campos numéricos para o formato correto.
-    """
-
-    colunas_numericas = [
-        "CODFORNEC",
-        "TOTAL_PRODUTOS",
-        "TOTAL_ATIVOS",
-        "PRODUTOS_COM_FOTOS",
-        "PRODUTOS_SEM_FOTOS",
-        "PERC_COM_FOTOS",
-        "PERC_SEM_FOTOS"
-    ]
-
-    for coluna in colunas_numericas:
-
-        if coluna in df.columns:
-            df[coluna] = pd.to_numeric(
-                df[coluna],
-                errors="coerce"
-            ).fillna(0)
-
-    return df
-
-
-def validar_planilha(df):
-    """
-    Verifica se as colunas necessárias existem.
-    """
-
-    obrigatorias = [
-        "CODFORNEC",
-        "NOME_FORNECEDOR",
-        "TOTAL_PRODUTOS",
-        "TOTAL_ATIVOS",
-        "PRODUTOS_COM_FOTOS",
-        "PRODUTOS_SEM_FOTOS",
-        "PERC_COM_FOTOS",
-        "PERC_SEM_FOTOS"
-    ]
-
-    faltantes = [
-        coluna
-        for coluna in obrigatorias
-        if coluna not in df.columns
-    ]
-
-    return faltantes
-
-
-def formatar_numero(valor):
-    """
-    Formata números no padrão brasileiro.
-    """
-
-    return f"{valor:,.0f}".replace(",", ".")
-
-
-def formatar_percentual(valor):
-    """
-    Formata percentual.
-    """
-
-    return f"{valor:.2f}%".replace(".", ",")
-
-
-def classificacao_cobertura(valor):
-
-    if valor >= 95:
-        return "EXCELENTE"
-
-    if valor >= 80:
-        return "ATENÇÃO"
-
-    return "CRÍTICO"
-
-
-def salvar_upload(arquivo):
-
-    """
-    Substitui os arquivos anteriores e salva somente
-    o relatório atual.
-    """
-
-    # Remove XLS/XLSX antigos
-    for arquivo_antigo in DATA_DIR.glob("*.xls"):
-        arquivo_antigo.unlink()
-
-    for arquivo_antigo in DATA_DIR.glob("*.xlsx"):
-        arquivo_antigo.unlink()
-
-    destino = DATA_DIR / "RelatorioGeralImagens.xls"
-
-    with open(destino, "wb") as f:
-        f.write(arquivo.getbuffer())
-
-    return destino
-
-
-# ============================================================
-# TÍTULO
-# ============================================================
-
-st.markdown(
-    '<div class="titulo">📷 Dashboard de Imagens de Produtos</div>',
-    unsafe_allow_html=True
-)
-
-st.markdown(
-    '<div class="subtitulo">'
-    'Acompanhamento de cobertura de imagens por fornecedor'
-    '</div>',
-    unsafe_allow_html=True
-)
-
-
-# ============================================================
-# SIDEBAR
-# ============================================================
+st.markdown('<div class="titulo">📷 Painel de Produtos sem Imagens</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitulo">Acompanhamento da cobertura de imagens por fornecedor</div>', unsafe_allow_html=True)
 
 with st.sidebar:
-
     st.header("⚙️ Controle")
-
+    meta = st.number_input("Meta de cobertura (%)", min_value=0.0, max_value=100.0, value=95.0, step=0.5)
+    st.divider()
     st.subheader("Importar relatório")
+    upload = st.file_uploader("Relatório unificado (.xls ou .xlsx)", type=["xls", "xlsx"])
 
-    arquivo_upload = st.file_uploader(
-        "Envie o RelatorioGeralImagens.xls",
-        type=["xls", "xlsx"]
-    )
+    if upload is not None and st.button("🔄 Atualizar Dashboard", use_container_width=True):
+        try:
+            destino = DATA_DIR / "RelatorioGeralImagens.xls"
+            destino.write_bytes(upload.getbuffer())
+            st.success("Relatório atualizado com sucesso.")
+            st.rerun()
+        except Exception as erro:
+            st.error(f"Erro ao salvar o relatório: {erro}")
 
-    if arquivo_upload is not None:
+    st.divider()
+    st.caption("O relatório deve ser gerado pela query unificada disponível em sql/.")
 
-        if st.button(
-            "🔄 Atualizar Dashboard",
-            use_container_width=True
-        ):
-
-            try:
-
-                caminho = salvar_upload(arquivo_upload)
-
-                st.success(
-                    f"Arquivo atualizado:\n{caminho.name}"
-                )
-
-                st.rerun()
-
-            except Exception as erro:
-
-                st.error(
-                    f"Erro ao salvar arquivo: {erro}"
-                )
-
-
-# ============================================================
-# LOCALIZA ARQUIVO
-# ============================================================
-
-arquivo = localizar_arquivo()
-
+arquivo = localizar_arquivo(DATA_DIR)
 if arquivo is None:
-
-    st.warning(
-        "Nenhum relatório encontrado."
-    )
-
-    st.info(
-        "Coloque o arquivo RelatorioGeralImagens.xls "
-        "dentro da pasta 'data' ou faça o upload pelo menu lateral."
-    )
-
+    st.warning("Nenhum relatório encontrado. Coloque o XLS/XLSX na pasta data ou faça o upload pelo menu lateral.")
     st.stop()
-
-
-# ============================================================
-# LEITURA
-# ============================================================
 
 try:
-
-    df = ler_excel(arquivo)
-
-    df = limpar_colunas(df)
-
-    faltantes = validar_planilha(df)
-
+    df = preparar_dados(limpar_colunas(ler_excel(arquivo)))
+    faltantes = validar_relatorio_unificado(df)
     if faltantes:
-
-        st.error(
-            "O relatório não possui as seguintes colunas:"
-        )
-
-        for coluna in faltantes:
-            st.write(f"- {coluna}")
-
+        st.error("O relatório não possui as colunas obrigatórias:")
+        st.write(faltantes)
         st.stop()
-
-    df = preparar_dados(df)
-
 except Exception as erro:
-
-    st.error(
-        f"Não foi possível ler o arquivo Excel: {erro}"
-    )
-
+    st.error(f"Não foi possível ler o relatório: {erro}")
+    st.info("Para XLS, confirme se a dependência xlrd está instalada.")
     st.stop()
 
+atualizacao = datetime.fromtimestamp(arquivo.stat().st_mtime)
+st.caption(f"📄 Arquivo: {arquivo.name} | Atualizado em: {atualizacao:%d/%m/%Y %H:%M} | Registros: {len(df):,}".replace(",", "."))
 
-# ============================================================
-# DATA DE ATUALIZAÇÃO
-# ============================================================
+resumo = construir_resumo_fornecedores(df, meta)
+produtos_sem = construir_produtos_sem_imagem(df)
 
-data_atualizacao = datetime.fromtimestamp(
-    arquivo.stat().st_mtime
-)
+# Filtros
+fornecedores = resumo[["CODFORNEC", "NOME_FORNECEDOR"]].drop_duplicates().sort_values("NOME_FORNECEDOR")
+fornecedores["OPCAO"] = fornecedores["CODFORNEC"].astype(int).astype(str) + " - " + fornecedores["NOME_FORNECEDOR"].astype(str)
 
-st.caption(
-    f"📄 Arquivo: {arquivo.name} | "
-    f"Atualizado em: {data_atualizacao.strftime('%d/%m/%Y %H:%M')}"
-)
+c1, c2, c3 = st.columns([2, 2, 1])
+with c1:
+    opcoes = ["TODOS"] + fornecedores["OPCAO"].tolist()
+    filtro_fornecedor = st.selectbox("🏢 Fornecedor", opcoes)
+with c2:
+    filtro_status = st.selectbox("🚦 Status", ["TODOS", "EXCELENTE", "ATENÇÃO", "CRÍTICO"])
+with c3:
+    ordenar_por = st.selectbox("↕️ Ordenar", ["Menor cobertura", "Maior sem foto", "Maior cobertura", "Maior ativos"])
 
+resumo_filtrado = resumo.copy()
+if filtro_fornecedor != "TODOS":
+    cod = int(filtro_fornecedor.split(" - ")[0])
+    resumo_filtrado = resumo_filtrado[resumo_filtrado["CODFORNEC"] == cod]
+if filtro_status != "TODOS":
+    resumo_filtrado = resumo_filtrado[resumo_filtrado["STATUS"] == filtro_status]
 
-# ============================================================
-# FILTRO DE FORNECEDOR
-# ============================================================
-
-fornecedores = df[
-    ["CODFORNEC", "NOME_FORNECEDOR"]
-].drop_duplicates()
-
-fornecedores["DESCRICAO"] = (
-    fornecedores["CODFORNEC"].astype(int).astype(str)
-    + " - "
-    + fornecedores["NOME_FORNECEDOR"].astype(str)
-)
-
-opcoes = ["TODOS"] + fornecedores["DESCRICAO"].tolist()
-
-filtro = st.selectbox(
-    "🏢 Fornecedor",
-    opcoes
-)
-
-
-if filtro != "TODOS":
-
-    codigo_selecionado = int(
-        filtro.split(" - ")[0]
-    )
-
-    dados = df[
-        df["CODFORNEC"] == codigo_selecionado
-    ].copy()
-
-else:
-
-    dados = df.copy()
-
-
-# ============================================================
-# CÁLCULOS DOS KPIs
-# ============================================================
-
-total_produtos = dados["TOTAL_PRODUTOS"].sum()
-
-total_ativos = dados["TOTAL_ATIVOS"].sum()
-
-produtos_com_fotos = dados["PRODUTOS_COM_FOTOS"].sum()
-
-produtos_sem_fotos = dados["PRODUTOS_SEM_FOTOS"].sum()
-
-
-if total_ativos > 0:
-
-    cobertura = (
-        produtos_com_fotos
-        / total_ativos
-        * 100
-    )
-
-    percentual_sem_foto = (
-        produtos_sem_fotos
-        / total_ativos
-        * 100
-    )
-
-else:
-
-    cobertura = 0
-    percentual_sem_foto = 0
-
-
-# ============================================================
-# CARDS
-# ============================================================
-
-col1, col2, col3, col4, col5 = st.columns(5)
-
-
-with col1:
-
-    st.markdown(
-        f"""
-        <div class="card card-blue">
-            <div class="card-title">
-                Total Produtos
-            </div>
-            <div class="card-value">
-                {formatar_numero(total_produtos)}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-
-with col2:
-
-    st.markdown(
-        f"""
-        <div class="card card-blue">
-            <div class="card-title">
-                Produtos Ativos
-            </div>
-            <div class="card-value">
-                {formatar_numero(total_ativos)}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-
-with col3:
-
-    st.markdown(
-        f"""
-        <div class="card card-green">
-            <div class="card-title">
-                Com Foto
-            </div>
-            <div class="card-value">
-                {formatar_numero(produtos_com_fotos)}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-
-with col4:
-
-    st.markdown(
-        f"""
-        <div class="card card-red">
-            <div class="card-title">
-                Sem Foto
-            </div>
-            <div class="card-value">
-                {formatar_numero(produtos_sem_fotos)}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-
-with col5:
-
-    classe = classificacao_cobertura(cobertura)
-
-    if classe == "EXCELENTE":
-        cor = "#16a34a"
-    elif classe == "ATENÇÃO":
-        cor = "#f59e0b"
-    else:
-        cor = "#dc2626"
-
-    st.markdown(
-        f"""
-        <div class="card card-orange">
-            <div class="card-title">
-                Cobertura
-            </div>
-            <div class="card-value" style="color:{cor}">
-                {formatar_percentual(cobertura)}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
+# KPIs
+kpis = calcular_kpis(resumo_filtrado, meta)
+col1, col2, col3, col4, col5, col6 = st.columns(6)
+metric_card(col1, "Total Produtos", kpis["total_produtos"], "blue")
+metric_card(col2, "Produtos Ativos", kpis["total_ativos"], "blue")
+metric_card(col3, "Com Foto", kpis["com_foto"], "green")
+metric_card(col4, "Sem Foto", kpis["sem_foto"], "red")
+metric_card(col5, "Cobertura", kpis["cobertura"], "green" if kpis["cobertura"] >= meta else "orange", percentual=True)
+metric_card(col6, f"Faltam p/ {meta:.1f}%", kpis["faltam_meta"], "orange" if kpis["faltam_meta"] > 0 else "green")
 
 st.write("")
 
+# Status geral
+classe = classificacao_cobertura(kpis["cobertura"], meta)
+diferenca = kpis["cobertura"] - meta
+st.markdown(
+    f'<div class="info-box">{status_badge(classe)} &nbsp; Cobertura atual: <b>{kpis["cobertura"]:.2f}%</b> &nbsp; | &nbsp; Meta: <b>{meta:.2f}%</b> &nbsp; | &nbsp; Diferença: <b>{diferenca:+.2f} p.p.</b></div>',
+    unsafe_allow_html=True,
+)
 
-# ============================================================
-# GRÁFICOS
-# ============================================================
-
-col_grafico1, col_grafico2 = st.columns(2)
-
-
-# ------------------------------------------------------------
-# GRÁFICO DE COBERTURA
-# ------------------------------------------------------------
-
-with col_grafico1:
-
-    if filtro == "TODOS":
-
-        grafico = dados.copy()
-
-        grafico["COBERTURA"] = (
-            grafico["PRODUTOS_COM_FOTOS"]
-            / grafico["TOTAL_ATIVOS"]
-            * 100
-        )
-
-        grafico = grafico.sort_values(
-            "COBERTURA",
-            ascending=True
-        )
-
-        fig = px.bar(
-            grafico,
-            x="COBERTURA",
-            y="NOME_FORNECEDOR",
-            orientation="h",
-            text="COBERTURA",
-            title="Cobertura de Imagens por Fornecedor",
-            color="COBERTURA",
-            color_continuous_scale=[
-                "#dc2626",
-                "#f59e0b",
-                "#16a34a"
-            ]
-        )
-
-        fig.update_traces(
-            texttemplate="%{text:.2f}%",
-            textposition="outside"
-        )
-
-        fig.update_layout(
-            height=650,
-            xaxis_title="Cobertura (%)",
-            yaxis_title="",
-            coloraxis_showscale=False,
-            margin=dict(l=20, r=30, t=60, b=20)
-        )
-
-        fig.update_xaxes(
-            range=[0, 105]
-        )
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
-
-    else:
-
-        st.info(
-            "Selecione 'TODOS' para visualizar "
-            "o comparativo entre fornecedores."
-        )
-
-
-# ------------------------------------------------------------
-# GRÁFICO COM FOTO X SEM FOTO
-# ------------------------------------------------------------
-
-with col_grafico2:
-
-    valores = pd.DataFrame({
-        "Status": [
-            "Com Foto",
-            "Sem Foto"
-        ],
-        "Quantidade": [
-            produtos_com_fotos,
-            produtos_sem_fotos
-        ]
-    })
-
-    fig_pizza = px.pie(
-        valores,
-        names="Status",
-        values="Quantidade",
-        hole=0.60,
-        color="Status",
-        color_discrete_map={
-            "Com Foto": "#16a34a",
-            "Sem Foto": "#dc2626"
-        },
-        title="Produtos com Foto x Sem Foto"
-    )
-
-    fig_pizza.update_traces(
-        textinfo="percent+value",
-        textfont_size=14
-    )
-
-    fig_pizza.update_layout(
-        height=500,
-        margin=dict(l=20, r=20, t=60, b=20),
-        legend_title=""
-    )
-
-    st.plotly_chart(
-        fig_pizza,
-        use_container_width=True
-    )
-
-
-# ============================================================
-# TABELA DE FORNECEDORES
-# ============================================================
-
-if filtro == "TODOS":
-
-    st.subheader(
-        "📊 Resumo por Fornecedor"
-    )
-
-    tabela = dados.copy()
-
-    tabela["COBERTURA"] = (
-        tabela["PRODUTOS_COM_FOTOS"]
-        / tabela["TOTAL_ATIVOS"]
-        * 100
-    )
-
-    tabela["STATUS"] = tabela["COBERTURA"].apply(
-        classificacao_cobertura
-    )
-
-    tabela = tabela[
-        [
-            "CODFORNEC",
-            "NOME_FORNECEDOR",
-            "TOTAL_PRODUTOS",
-            "TOTAL_ATIVOS",
-            "PRODUTOS_COM_FOTOS",
-            "PRODUTOS_SEM_FOTOS",
-            "COBERTURA",
-            "STATUS"
-        ]
-    ].copy()
-
-    tabela.columns = [
-        "Código",
-        "Fornecedor",
-        "Total Produtos",
-        "Ativos",
-        "Com Foto",
-        "Sem Foto",
-        "Cobertura %",
-        "Status"
-    ]
-
-    st.dataframe(
-        tabela,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Cobertura %": st.column_config.NumberColumn(
-                format="%.2f%%"
-            )
-        }
-    )
-
-
-# ============================================================
-# FORNECEDOR SELECIONADO
-# ============================================================
-
+consistencia = validar_consistencia(resumo_filtrado)
+if consistencia["ok"]:
+    st.success("✓ Dados consistentes: ativos = com foto + sem foto.")
 else:
+    st.warning(consistencia["mensagem"])
 
-    st.subheader(
-        f"🏢 Detalhes - {filtro}"
-    )
+# Gráficos
+import plotly.express as px
+import plotly.graph_objects as go
 
-    registro = dados.iloc[0]
+g1, g2 = st.columns(2)
+with g1:
+    graf = resumo_filtrado.copy()
+    if not graf.empty:
+        graf = graf.sort_values("COBERTURA", ascending=True)
+        fig = px.bar(graf, x="COBERTURA", y="NOME_FORNECEDOR", orientation="h", text="COBERTURA", title="Cobertura por fornecedor")
+        fig.add_vline(x=meta, line_dash="dash", annotation_text=f"Meta {meta:.0f}%")
+        fig.update_traces(texttemplate="%{text:.2f}%", textposition="outside")
+        fig.update_layout(height=520, xaxis_title="Cobertura (%)", yaxis_title="", xaxis_range=[0, 105], margin=dict(l=10,r=30,t=60,b=20))
+        st.plotly_chart(fig, use_container_width=True)
 
-    cobertura_fornecedor = (
-        registro["PRODUTOS_COM_FOTOS"]
-        / registro["TOTAL_ATIVOS"]
-        * 100
-        if registro["TOTAL_ATIVOS"] > 0
-        else 0
-    )
+with g2:
+    pie = pd.DataFrame({"Status": ["Com Foto", "Sem Foto"], "Quantidade": [kpis["com_foto"], kpis["sem_foto"]]})
+    fig = px.pie(pie, names="Status", values="Quantidade", hole=0.62, title="Produtos ativos: com foto x sem foto", color="Status", color_discrete_map={"Com Foto": "#16a34a", "Sem Foto": "#dc2626"})
+    fig.update_traces(textinfo="percent+value")
+    fig.update_layout(height=520, margin=dict(l=10,r=10,t=60,b=20), legend_title="")
+    st.plotly_chart(fig, use_container_width=True)
 
-    col_a, col_b, col_c = st.columns(3)
+# Ranking
+st.subheader("📊 Ranking de Fornecedores")
+tabela = resumo_filtrado.copy()
+if ordenar_por == "Menor cobertura":
+    tabela = tabela.sort_values("COBERTURA")
+elif ordenar_por == "Maior sem foto":
+    tabela = tabela.sort_values("PRODUTOS_SEM_FOTOS", ascending=False)
+elif ordenar_por == "Maior cobertura":
+    tabela = tabela.sort_values("COBERTURA", ascending=False)
+else:
+    tabela = tabela.sort_values("TOTAL_ATIVOS", ascending=False)
 
-    with col_a:
+tabela_exibicao = tabela[["CODFORNEC", "NOME_FORNECEDOR", "TOTAL_PRODUTOS", "TOTAL_ATIVOS", "PRODUTOS_COM_FOTOS", "PRODUTOS_SEM_FOTOS", "COBERTURA", "STATUS", "FALTAM_META"]].copy()
+tabela_exibicao.columns = ["Código", "Fornecedor", "Total Produtos", "Ativos", "Com Foto", "Sem Foto", "Cobertura %", "Status", "Faltam p/ Meta"]
+st.dataframe(tabela_exibicao, use_container_width=True, hide_index=True, column_config={"Cobertura %": st.column_config.NumberColumn(format="%.2f%%")})
 
-        st.metric(
-            "Produtos Ativos",
-            formatar_numero(
-                registro["TOTAL_ATIVOS"]
-            )
-        )
+# Produtos sem imagem
+st.subheader("🔎 Produtos sem imagem")
+if not possui_detalhe(df):
+    st.info("O arquivo atual é um relatório de resumo. Para habilitar a lista detalhada de produtos sem imagem, gere o relatório pela query unificada em sql/RelatorioImagens_Unificado.sql.")
+    ps = pd.DataFrame(columns=["CODPROD", "CODFAB", "DESCRICAO", "CODAUXILIAR", "CODAUXILIAR2", "CODFORNEC", "NOME_FORNECEDOR"])
+else:
+    ps = produtos_sem.copy()
+if filtro_fornecedor != "TODOS":
+    ps = ps[ps["CODFORNEC"] == int(filtro_fornecedor.split(" - ")[0])]
 
-    with col_b:
+busca = st.text_input("Pesquisar por código, fabricante, descrição ou EAN", placeholder="Digite para filtrar...")
+if busca.strip():
+    termo = busca.strip().lower()
+    mascara = ps.astype(str).apply(lambda col: col.str.lower().str.contains(termo, na=False)).any(axis=1)
+    ps = ps[mascara]
 
-        st.metric(
-            "Produtos Sem Foto",
-            formatar_numero(
-                registro["PRODUTOS_SEM_FOTOS"]
-            )
-        )
+st.caption(f"{len(ps):,} produto(s) sem imagem encontrado(s).".replace(",", "."))
+ps_exibicao = ps[["CODPROD", "CODFAB", "DESCRICAO", "CODAUXILIAR", "CODAUXILIAR2", "CODFORNEC", "NOME_FORNECEDOR"]].copy()
+ps_exibicao.columns = ["Código Produto", "Código Fabricante", "Descrição", "EAN", "EAN 2", "Código Fornecedor", "Fornecedor"]
+st.dataframe(ps_exibicao, use_container_width=True, hide_index=True, height=420)
 
-    with col_c:
-
-        st.metric(
-            "Cobertura",
-            formatar_percentual(
-                cobertura_fornecedor
-            )
-        )
-
-
-# ============================================================
-# DOWNLOAD DO RELATÓRIO ATUAL
-# ============================================================
-
-st.subheader(
-    "📥 Exportar dados"
-)
-
-csv = dados.to_csv(
-    index=False,
-    sep=";",
-    encoding="utf-8-sig"
-)
-
-st.download_button(
-    label="⬇️ Baixar dados filtrados",
-    data=csv,
-    file_name="dashboard_imagens.csv",
-    mime="text/csv"
-)
-
-
-# ============================================================
-# RODAPÉ
-# ============================================================
+# Exportações
+st.subheader("📥 Exportar")
+e1, e2 = st.columns(2)
+with e1:
+    st.download_button("⬇️ Exportar resumo por fornecedor", data=exportar_csv(tabela), file_name="resumo_imagens_fornecedores.csv", mime="text/csv", use_container_width=True)
+with e2:
+    st.download_button("⬇️ Exportar produtos sem imagem", data=exportar_csv(ps), file_name="produtos_sem_imagem.csv", mime="text/csv", use_container_width=True)
 
 st.divider()
-
-st.caption(
-    "Dashboard de Imagens de Produtos | "
-    "Fonte: RelatorioGeralImagens.xls"
-)
+st.caption("Dashboard de Imagens de Produtos | Relatório unificado")

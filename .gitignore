@@ -1,31 +1,14 @@
-# Ambiente virtual
 .venv/
 venv/
 env/
-
-# Python
 __pycache__/
 *.py[cod]
-*.pyo
-
-# IDE
 .vscode/
 .idea/
-
-# Git
 .git/
-
-# Dados da empresa
+exports/*
+# Relatórios da empresa podem conter dados internos
 data/*.xls
 data/*.xlsx
-
-# Exportações
-exports/
-
-# Arquivos temporários
-*.tmp
-*.temp
-
-# Sistema operacional
 Thumbs.db
 .DS_Store
