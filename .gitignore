@@ -12,3 +12,7 @@ data/*.xls
 data/*.xlsx
 Thumbs.db
 .DS_Store
+# Testes locais do MongoDB
+test_connection.py
+test_mongodb.py
+migrar_excel_mongodb.py
