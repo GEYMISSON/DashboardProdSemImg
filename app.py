@@ -21,6 +21,9 @@ from utils.data_utils import (
 )
 from utils.ui import aplicar_estilo, metric_card, status_badge
 
+# Linha acrescentada para carregar relatório do MongoDB Atlas
+from utils.mongodb import carregar_relatorio_mongodb
+
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
@@ -56,25 +59,25 @@ with st.sidebar:
     st.divider()
     st.caption("O relatório deve ser gerado pela query unificada disponível em sql/.")
 
-arquivo = localizar_arquivo(DATA_DIR)
-if arquivo is None:
-    st.warning("Nenhum relatório encontrado. Coloque o XLS/XLSX na pasta data ou faça o upload pelo menu lateral.")
-    st.stop()
-
 try:
-    df = preparar_dados(limpar_colunas(ler_excel(arquivo)))
+    df, report_id = carregar_relatorio_mongodb()
+
     faltantes = validar_relatorio_unificado(df)
+
     if faltantes:
-        st.error("O relatório não possui as colunas obrigatórias:")
+        st.error("O relatório do MongoDB não possui as colunas obrigatórias:")
         st.write(faltantes)
         st.stop()
+
 except Exception as erro:
-    st.error(f"Não foi possível ler o relatório: {erro}")
-    st.info("Para XLS, confirme se a dependência xlrd está instalada.")
+    st.error(f"Não foi possível carregar o relatório do MongoDB: {erro}")
     st.stop()
 
-atualizacao = datetime.fromtimestamp(arquivo.stat().st_mtime)
-st.caption(f"📄 Arquivo: {arquivo.name} | Atualizado em: {atualizacao:%d/%m/%Y %H:%M} | Registros: {len(df):,}".replace(",", "."))
+st.caption(
+    f"📊 Fonte: MongoDB Atlas | "
+    f"Report ID: {report_id} | "
+    f"Registros: {len(df):,}".replace(",", ".")
+)
 
 resumo = construir_resumo_fornecedores(df, meta)
 produtos_sem = construir_produtos_sem_imagem(df)

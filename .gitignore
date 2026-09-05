@@ -16,3 +16,4 @@ Thumbs.db
 test_connection.py
 test_mongodb.py
 migrar_excel_mongodb.py
+test_mongodb_loader.py
