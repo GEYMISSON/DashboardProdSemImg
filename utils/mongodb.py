@@ -1,6 +1,7 @@
 ﻿import os
 
 import pandas as pd
+import streamlit as st
 from pymongo import MongoClient
 from pymongo.server_api import ServerApi
 
@@ -11,22 +12,51 @@ COLLECTION = "relatorios"
 
 def obter_uri_mongodb():
     """
-    Obtém a URI do MongoDB Atlas através da variável de ambiente MONGO_URI.
+    Obtém a URI do MongoDB Atlas.
+
+    Prioridade:
+    1. Variável de ambiente MONGO_URI
+    2. Secret MONGO_URI do Streamlit
     """
+
+    # --------------------------------------------------------
+    # Ambiente local
+    # --------------------------------------------------------
+
     uri = os.getenv("MONGO_URI")
 
-    if not uri:
-        raise RuntimeError(
-            "A variável de ambiente MONGO_URI não foi encontrada."
-        )
+    if uri:
+        return uri
 
-    return uri
+    # --------------------------------------------------------
+    # Streamlit Community Cloud
+    # --------------------------------------------------------
+
+    try:
+        uri = st.secrets["MONGO_URI"]
+
+        if uri:
+            return uri
+
+    except Exception:
+        pass
+
+    # --------------------------------------------------------
+    # Nenhuma configuração encontrada
+    # --------------------------------------------------------
+
+    raise RuntimeError(
+        "A conexão com o MongoDB Atlas não foi configurada. "
+        "Defina MONGO_URI como variável de ambiente ou "
+        "como Secret do Streamlit."
+    )
 
 
 def conectar_mongodb():
     """
     Cria e retorna uma conexão com o MongoDB Atlas.
     """
+
     uri = obter_uri_mongodb()
 
     client = MongoClient(
@@ -42,8 +72,10 @@ def conectar_mongodb():
 
 def obter_collection():
     """
-    Retorna a collection 'relatorios' do banco 'DashboardProd'.
+    Retorna a collection 'relatorios'
+    do banco 'DashboardProd'.
     """
+
     client = conectar_mongodb()
 
     db = client[BANCO]
@@ -69,14 +101,16 @@ def obter_report_id_mais_recente(collection):
 
     if documento is None:
         raise RuntimeError(
-            "Nenhum relatório encontrado na collection 'relatorios'."
+            "Nenhum relatório encontrado na collection "
+            "'relatorios'."
         )
 
     report_id = documento.get("report_id")
 
     if not report_id:
         raise RuntimeError(
-            "Não foi possível identificar o report_id do relatório."
+            "Não foi possível identificar o report_id "
+            "do relatório."
         )
 
     return report_id
@@ -84,17 +118,21 @@ def obter_report_id_mais_recente(collection):
 
 def carregar_relatorio_mongodb(report_id=None):
     """
-    Carrega o relatório do MongoDB Atlas e devolve um DataFrame
-    com as mesmas colunas utilizadas atualmente pelo dashboard.
+    Carrega o relatório do MongoDB Atlas e devolve
+    um DataFrame com as mesmas colunas utilizadas
+    atualmente pelo dashboard.
     """
 
     client = None
 
     try:
+
         client, collection = obter_collection()
 
         if report_id is None:
-            report_id = obter_report_id_mais_recente(collection)
+            report_id = obter_report_id_mais_recente(
+                collection
+            )
 
         documentos = collection.find(
             {"report_id": report_id},
@@ -112,27 +150,66 @@ def carregar_relatorio_mongodb(report_id=None):
 
         for documento in documentos:
 
-            fornecedor = documento.get("fornecedor", {})
-            resumo = documento.get("resumo_fornecedor", {})
-            produto = documento.get("produto", {})
+            fornecedor = documento.get(
+                "fornecedor",
+                {},
+            )
+
+            resumo = documento.get(
+                "resumo_fornecedor",
+                {},
+            )
+
+            produto = documento.get(
+                "produto",
+                {},
+            )
 
             registros.append(
                 {
                     "CODPROD": produto.get("codigo"),
-                    "CODFAB": produto.get("codigo_fabricante"),
-                    "DESCRICAO": produto.get("descricao"),
-                    "CODAUXILIAR": produto.get("codigo_auxiliar"),
-                    "CODAUXILIAR2": produto.get("codigo_auxiliar_2"),
-                    "CODFORNEC": fornecedor.get("codigo"),
-                    "NOME_FORNECEDOR": fornecedor.get("nome"),
-                    "TOTAL_PRODUTOS": resumo.get("total_produtos"),
-                    "TOTAL_ATIVOS": resumo.get("total_ativos"),
-                    "PRODUTOS_COM_FOTOS": resumo.get("produtos_com_fotos"),
-                    "PRODUTOS_SEM_FOTOS": resumo.get("produtos_sem_fotos"),
-                    "PERC_COM_FOTOS": resumo.get("perc_com_fotos"),
-                    "PERC_SEM_FOTOS": resumo.get("perc_sem_fotos"),
-                    "ATIVO": produto.get("ativo"),
-                    "STATUS_IMAGEM": produto.get("status_imagem"),
+                    "CODFAB": produto.get(
+                        "codigo_fabricante"
+                    ),
+                    "DESCRICAO": produto.get(
+                        "descricao"
+                    ),
+                    "CODAUXILIAR": produto.get(
+                        "codigo_auxiliar"
+                    ),
+                    "CODAUXILIAR2": produto.get(
+                        "codigo_auxiliar_2"
+                    ),
+                    "CODFORNEC": fornecedor.get(
+                        "codigo"
+                    ),
+                    "NOME_FORNECEDOR": fornecedor.get(
+                        "nome"
+                    ),
+                    "TOTAL_PRODUTOS": resumo.get(
+                        "total_produtos"
+                    ),
+                    "TOTAL_ATIVOS": resumo.get(
+                        "total_ativos"
+                    ),
+                    "PRODUTOS_COM_FOTOS": resumo.get(
+                        "produtos_com_fotos"
+                    ),
+                    "PRODUTOS_SEM_FOTOS": resumo.get(
+                        "produtos_sem_fotos"
+                    ),
+                    "PERC_COM_FOTOS": resumo.get(
+                        "perc_com_fotos"
+                    ),
+                    "PERC_SEM_FOTOS": resumo.get(
+                        "perc_sem_fotos"
+                    ),
+                    "ATIVO": produto.get(
+                        "ativo"
+                    ),
+                    "STATUS_IMAGEM": produto.get(
+                        "status_imagem"
+                    ),
                 }
             )
 
@@ -140,12 +217,14 @@ def carregar_relatorio_mongodb(report_id=None):
 
         if df.empty:
             raise RuntimeError(
-                f"Nenhum registro encontrado para o report_id: {report_id}"
+                f"Nenhum registro encontrado para "
+                f"o report_id: {report_id}"
             )
 
         return df, report_id
 
     finally:
+
         if client is not None:
             client.close()
 
@@ -158,17 +237,23 @@ def contar_registros_mongodb(report_id=None):
     client = None
 
     try:
+
         client, collection = obter_collection()
 
         if report_id is None:
-            report_id = obter_report_id_mais_recente(collection)
+            report_id = obter_report_id_mais_recente(
+                collection
+            )
 
         quantidade = collection.count_documents(
-            {"report_id": report_id}
+            {
+                "report_id": report_id
+            }
         )
 
         return quantidade, report_id
 
     finally:
+
         if client is not None:
             client.close()
